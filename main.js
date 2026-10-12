@@ -84,6 +84,8 @@ chatRelay.on('state', () => pushState());
 const gameStats = new GameStats();
 gameStats.on('state', () => pushState());
 
+const damageMeterEnabled = process.env.DUNGEON_BLITZ_DAMAGE_METER !== '0';
+
 // While the game runs in the standalone projector, the launcher does what the game page's
 // script would have: rich presence and region latency (lib/gameHost.js). FlashBrowser runs
 // the page itself, so it needs none of this.
@@ -691,7 +693,10 @@ async function launchFlashBrowser(serverUrl) {
         gameUrl: serverUrl,
         // Its own profile: two Chromium versions must never share one.
         userDataDir: path.join(app.getPath('userData'), 'flashbrowser'),
-        devTools: !app.isPackaged
+        devTools: !app.isPackaged,
+        // The damage meter on the game page (flashbrowser/damageMeter) reads the server's combat
+        // feed as this launcher's account. Off with DUNGEON_BLITZ_DAMAGE_METER=0.
+        damageMeter: damageMeterEnabled ? { version: app.getVersion(), launcherToken: sessionCache.read().token || '' } : null
     });
     console.log(`[FlashBrowser] Starting ${launch.command} for ${serverUrl}`);
 

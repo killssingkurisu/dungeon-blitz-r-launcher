@@ -117,12 +117,26 @@ function checkLaunch() {
     assert.ok(dev.args.includes('--db-devtools'), 'a checkout may open developer tools');
     assert.ok(!launch.args.includes('--db-devtools'), 'an installed launcher may not');
 
+    // The damage meter: named with the launcher's version, and its token kept off the command
+    // line (which any process can list) and out of a parent's environment.
+    assert.ok(!launch.args.some((arg) => arg.startsWith('--db-damage-meter')), 'no meter unless asked');
+    const metered = prepareFlashBrowserLaunch(found, {
+        gameUrl: 'http://x/',
+        userDataDir: 'd',
+        env: { PATH: 'p', DUNGEON_BLITZ_LAUNCHER_TOKEN: 'stale' },
+        damageMeter: { version: '1.3.0', launcherToken: 'launcher-token' }
+    });
+    assert.ok(metered.args.includes('--db-damage-meter=1.3.0'), 'the meter is asked for with the version it names');
+    assert.deepStrictEqual(metered.env, { PATH: 'p', DUNGEON_BLITZ_LAUNCHER_TOKEN: 'launcher-token' }, 'the token travels in the environment');
+    assert.ok(!metered.args.join(' ').includes('launcher-token'), 'and never on the command line');
+
     // The switches the launcher passes are exactly the ones the game-window app reads.
     const host = fs.readFileSync(path.join(ROOT, 'flashbrowser', 'main.js'), 'utf8');
-    for (const name of ['game-url', 'plugin', 'flash-version', 'user-data']) {
+    for (const name of ['game-url', 'plugin', 'flash-version', 'user-data', 'damage-meter']) {
         assert.ok(host.includes(`option('${name}')`), `flashbrowser/main.js reads --db-${name}`);
     }
     assert.ok(host.includes("'--db-devtools'"), 'flashbrowser/main.js reads --db-devtools');
+    assert.ok(host.includes('DUNGEON_BLITZ_LAUNCHER_TOKEN'), 'flashbrowser/main.js reads the token from the environment');
     console.log('[test-flash-browser] FlashBrowser is started on the game page with the plugin, in its own profile: OK');
 }
 

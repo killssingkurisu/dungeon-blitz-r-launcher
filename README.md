@@ -9,7 +9,8 @@ with Discord — and once that is done it opens the game and connects to the ser
 
 In the background it also connects the player's Discord lobby so lobby chat works,
 publishes Discord rich presence, and mirrors the player's in-game chat into that lobby — in
-both directions — for as long as the game is open.
+both directions — for as long as the game is open. A damage meter in the grey margins of the
+game window shows the player's DPS, damage per spell and rotation as they play.
 
 ## A free, non-commercial preservation project
 
@@ -522,6 +523,101 @@ The portal half is not code, and it is where an invisible widget usually stops:
 Until the server route exists the row reads `server cannot write it`, so a portal-side
 problem and a data-side problem can be told apart without guessing.
 
+## Damage meter
+
+The game draws a 3:2 picture in the middle of its window and leaves grey margins either side
+of it. The damage meter lives there, on the game page in FlashBrowser: a small `Damage meter`
+box in the top left corner shows it, and `×` on its title (or `F8`) hides it again. Shown, it
+is three panels -- the Damage Meter (a timer, DPS, total damage, crit rate, DPS over time, what
+the damage scales with) and the Rotation (`MA2 s2 s3 RA1 s4`) on the left, the Spells (damage
+per spell: casts, crits, damage over time, which crits set off a rune proc) on the right --
+each of which can be dragged by its title and resized from its corner. `F6` starts or stops
+the timer, `F7` resets it. Dungeon mode measures one run per dungeon: it pauses when the player
+dies or a boss falls, ends at 100% or Level Complete, and counts the gold gained. `Export...`
+writes `dbb-dps` JSON for the DPS Calculator, or CSV for a spreadsheet, to `Documents/Dungeon
+Blitz DPS`; `Copy summary` puts a text summary on the clipboard. The meter starts hidden and
+remembers whether it was shown. Legacy (the standalone Flash Player) is Flash Player's own
+window, so it has no meter.
+
+The meter is DB DPS Launcher's ([db-dpsmod](https://github.com/killssingkurisu/db-dpsmod), MIT):
+`flashbrowser/damageMeter` carries its packet reading, meter and export files unchanged, so a
+fix there can be copied across whole, and `overlay.js` is its in-game overlay with its IPC
+channels renamed. It ships inside FlashBrowser's app folder (`node tools/fetch-flash-browser.js`
+copies `flashbrowser/` whole), so it runs on Electron 11's Node 12 like the rest of that app.
+
+The launcher never sees the game's traffic -- FlashBrowser and Flash Player talk to the
+server themselves -- so, as with chat, the game server publishes what the meter needs on a
+feed and FlashBrowser reads it: about twice a second, and only once the player has shown the
+meter, so a player who never does costs the server nothing (hiding it again keeps it reading,
+so a glance at the screen does not lose the fight). Nothing on the player's machine is read,
+patched or redirected:
+
+```text
+GET /api/combat/outbound[?since=<cursor>]     X-Launcher-Token: <the launcher token>
+  200 { cursor, now, level, backlog, data, packets: [{ seq, at, dir, id, data }] }
+  404 { "reason": "no-game-session" }    the feed is there; no game session for this caller yet
+  404 (anything else)                    no feed on this server, which the meter says
+```
+
+The token is the launcher token `/api/discord/stats/sync` takes in its body; a GET has no body,
+and a header keeps it out of URLs and logs. The launcher hands it to FlashBrowser in its
+environment (`DUNGEON_BLITZ_LAUNCHER_TOKEN`, read once and dropped), never on the command line.
+The server finds the caller's game session from it, and answers a missing or unknown token
+like a caller with no game session (`401` or `403` also work: the meter then says the server
+did not accept the sign-in).
+
+- `packets` are the caller's own game session's, across all its connections, oldest first:
+  `dir` is `"up"` for a packet the client sent and `"down"` for one the server sent it, `id`
+  the packet type, `data` the payload in base64 (the bytes after the 4-byte header, exactly as
+  they passed on that connection, entity ids and all), `at` the server's clock when it passed,
+  in Unix epoch milliseconds, and `seq` a number that only goes up for the whole session,
+  across levels.
+- `cursor` is a string of the server's choosing; the next request passes it back as `since`
+  and gets what came after it.
+- `now` is the server's clock as it answers, in Unix epoch milliseconds. The meter plays
+  packets back a second behind it, spaced as they happened, so a batch that arrives at once
+  still times every hit right.
+- An answer without `since` has `backlog: true`, `level` -- the level the player is in, by its
+  LevelTypes name (`GoblinRiverDungeon`) -- and the packets the player's current connection has
+  carried so far, from their arrival in the level. They tell the meter who the player is and
+  what is around them, and none of them are counted, so a backlog can leave out casts, hits and
+  ticks and should: every `0x08` and `0x0F`, and the `0x07` that changed a state (below), is
+  enough. When a `since` is too old to answer, a backlog makes the meter start over the same
+  way. After the backlog, `level` is not read again: enter world (`0x21`) in the stream says
+  when the player moves on.
+- `data`, optional, names the game's data files -- `{ "game": "/p/cbq/Game.swz", "login":
+  "/p/cbp/Login.swz" }` -- for spell names, ranks and scaling, and which monsters are bosses.
+  Only files on the game server itself are fetched; without them the meter uses the snapshot
+  in `flashbrowser/damageMeter/data`.
+
+The packets the meter reads; everything else can be left out:
+
+| Packet | Up (client to server) | Down (server to client) |
+| --- | --- | --- |
+| `0x08` entity full update | everything the client runs: the player's character (and its id), its summons, and the monsters it runs, with names and teams | |
+| `0x0F` newly relevant entity | | names and teams of what comes into view |
+| `0x07` incremental update | entity state: a death, a revive, a boss dying | the same |
+| `0x09` power cast | casts | |
+| `0x0A` power hit | hits, crits, rune procs | |
+| `0x79` damage-over-time tick | ticks | ticks on monsters another player's client runs |
+| `0x35` receive gold | | gold gained |
+| `0x21` enter world | | the next level, which comes on a new connection |
+| `0xB7` level completion | how much of the dungeon is cleared | the same |
+| `0x3F` set level complete | Level Complete | |
+| `0x87` receive level complete | | Level Complete |
+
+`0x07` comes many times a second for everything that moves. The meter needs, for each entity,
+only the first one after its `0x08` or `0x0F` and every one whose state (the 2 bits after id,
+dx, dy and dvx) differs from the one before; sending them all works too, at more traffic. An
+answer can be up to 16 MB.
+
+Turn the meter off with `DUNGEON_BLITZ_DAMAGE_METER=0` on the launcher: FlashBrowser is then
+started without `--db-damage-meter`, and nothing of it loads.
+
+```bash
+node tools/test-damage-meter.js   # the feed against a mock server: backlog, playback, a new level, exports
+```
+
 ## Remembered account
 
 The launcher's own sign-in writes the account to `launcher-state.json`. A player who signed
@@ -792,6 +888,7 @@ drives the module against a local mock.
 | `tools/test-social-bridge.js` | Discord-client and browser authorization paths, lobby join, two-way chat |
 | `tools/test-discord-ipc.js` | The RPC framing, `AUTHORIZE` payload and PING/PONG |
 | `tools/test-launcher-status.js` | Every state of the status strip and the account row |
+| `tools/test-damage-meter.js` | The combat feed against a mock server: no feed, no session, the backlog, playback at the pace of play, a new level, game data fetched from the game server only, exports and settings |
 | `tools/test-install-location.js` | Disk-image and Downloads detection, and what is deliberately not flagged |
 | `tools/test-windows-support.js` | Which Windows versions and architectures start, and how the others are refused |
 | `tools/test-projector.js` | Finding Flash Player, the SWF it opens, the pinned downloads, and the presence and region-latency work done for the game page |
@@ -827,6 +924,12 @@ closes the game.
   `nodeIntegration: false` and plugins disabled; its only contact with the main process is the fixed set of IPC calls in
   `preload.js` (state, sign-in, forget, play, choose Flash Player, move to Applications,
   relaunch, quit) and it loads no remote content at all.
+- The damage meter runs in FlashBrowser as its preload (`flashbrowser/damageMeter/overlay.js`),
+  in the page's isolated world: the page's own scripts never see its functions, and it exposes
+  nothing to them. It talks to FlashBrowser's main process over two IPC channels, which take
+  commands from the game page only. The meter reads the combat feed of the player's own game
+  session and the game's data files from the game server, and nothing else; it does not touch
+  the game, its files or its traffic.
 - No window of the launcher hosts Flash. The game runs in FlashBrowser or in Adobe's
   standalone Flash Player, each a separate program started on the selected server only. The
   Electron 11 runtime and the plugin are pinned in `flashbrowser.lock.json`, Flash Player in

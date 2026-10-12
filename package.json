@@ -13,7 +13,7 @@
     "start": "electron .",
     "fetch-projector": "node tools/fetch-projector.js",
     "fetch-flash-browser": "node tools/fetch-flash-browser.js",
-    "test": "node tools/test-presence.js && node tools/test-chat-relay.js && node tools/test-game-stats.js && node tools/test-linked-lobby.js && node tools/test-launcher-session-recovery.js && node tools/test-social-bridge.js && node tools/test-discord-ipc.js && node tools/test-launcher-status.js && node tools/test-install-location.js && node tools/test-package-files.js && node tools/test-updater.js && node tools/test-windows-support.js && node tools/test-projector.js && node tools/test-flash-browser.js && node tools/test-discord-login-key.js",
+    "test": "node tools/test-presence.js && node tools/test-chat-relay.js && node tools/test-game-stats.js && node tools/test-damage-meter.js && node tools/test-linked-lobby.js && node tools/test-launcher-session-recovery.js && node tools/test-social-bridge.js && node tools/test-discord-ipc.js && node tools/test-launcher-status.js && node tools/test-install-location.js && node tools/test-package-files.js && node tools/test-updater.js && node tools/test-windows-support.js && node tools/test-projector.js && node tools/test-flash-browser.js && node tools/test-discord-login-key.js",
     "make-icons": "node tools/make-icons.js",
     "test-updater": "node tools/test-updater.js",
     "dist": "electron-builder",
